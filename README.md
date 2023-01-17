@@ -23,7 +23,13 @@ npm install
 npm run build
 ```
 
-3. Run
+5. Add .env file, then set the value as you like
+```
+# first copy .env.example to .env
+cp .env.example .env
+```
+
+6. Run
 
 ```shell
 # development
