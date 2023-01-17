@@ -24,7 +24,7 @@ npm run build
 ```
 
 5. Add .env file, then set the value as you like
-```
+```shell
 # first copy .env.example to .env
 cp .env.example .env
 ```
