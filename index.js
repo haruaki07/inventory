@@ -1,106 +1,98 @@
-const path = require("path");
-const express = require("express");
-const bodyParser = require("body-parser");
+const path = require("path")
+const express = require("express")
+const bodyParser = require("body-parser")
 
-require("dotenv/config");
+require("dotenv/config")
 
-const sqlite3 = require("sqlite3").verbose();
-const db = new sqlite3.Database("app.db");
+const mariadb = require("mariadb")
 
-const app = express();
+/** @param {import("mariadb").Connection} conn */
+const migrate = async (conn) => {
+  await conn.execute(`CREATE TABLE IF NOT EXISTS products (
+    \`id\` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    \`name\` VARCHAR(255) NOT NULL,
+    \`price\` DECIMAL(10, 2) NOT NULL
+  );`)
 
-// callback hell :D
-while (true) {
-  try {
-    db.run(
-      `
-      CREATE TABLE IF NOT EXISTS products (
-        name VARCHAR, 
-        price DECIMAL(10, 2)
-      )`,
-      (_, err) => {
-        if (err) throw err;
-
-        db.all("SELECT rowid FROM products", (err, rows) => {
-          if (err) throw err;
-
-          if (rows.length <= 0) {
-            db.exec(`
-              INSERT INTO products (name, price)
-                VALUES
-                  ("Microsoft Surface Pro 9", 13940000),
-                  ("MacBook Pro M2", 20999000);
-            `);
-          }
-        });
-      }
-    );
-  } catch (e) {
-    console.error(e);
-    process.exit(1);
+  /** @type {{id: number}[]} */
+  const rows = await conn.query("SELECT id FROM products")
+  if (rows?.length <= 0) {
+    await conn.execute(`
+      INSERT INTO products (name, price)
+        VALUES
+          ("Microsoft Surface Pro 9", 13940000),
+          ("MacBook Pro M2", 20999000);`)
   }
-
-  break;
 }
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.set("view engine", "ejs");
+;(async () => {
+  try {
+    const app = express()
+    const conn = await mariadb.createConnection({
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASS,
+    })
 
-app.locals.formatRupiah = (number) => {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-  }).format(number);
-};
+    await migrate(conn).catch((e) => console.error("error on migrate: ", e))
 
-app.get("/", (_, res) => {
-  db.all("SELECT rowid as id, name, price FROM products", (err, rows) => {
-    if (err) {
-      console.log(err);
-      return res.sendStatus(500).end();
+    app.use(bodyParser.urlencoded({ extended: true }))
+    app.set("view engine", "ejs")
+
+    app.locals.formatRupiah = (number) => {
+      return new Intl.NumberFormat("id-ID", {
+        style: "currency",
+        currency: "IDR",
+      }).format(number)
     }
 
-    res.render("pages/index", {
-      products: rows,
-    });
-  });
-});
+    app.get("/", async (_, res, next) => {
+      const rows = await conn
+        .query("SELECT id, name, price FROM products")
+        .catch(next)
 
-app.post("/create", (req, res) => {
-  db.run(
-    `INSERT INTO products (name, price) VALUES (?, ?)`,
-    [req.body.name, req.body.price],
-    (err) => {
-      if (err) {
-        console.log(err);
-        return res.sendStatus(500).end();
-      }
+      res.render("pages/index", {
+        products: rows,
+      })
+    })
 
-      return res.redirect("/");
-    }
-  );
-});
+    app.post("/create", async (req, res, next) => {
+      await conn
+        .execute("INSERT INTO products (name, price) VALUES (?, ?)", [
+          req.body.name,
+          req.body.price,
+        ])
+        .catch(next)
 
-app.get("/create", (req, res) => res.render("pages/create"));
+      return res.redirect("/")
+    })
 
-app.get("/delete/:id", (req, res) => {
-  const id = req.params.id;
-  if (!id) return res.sendStatus(400).end();
+    app.get("/create", (req, res) => res.render("pages/create"))
 
-  db.run("DELETE FROM products WHERE rowid = ?", id, (_, err) => {
-    if (err) {
-      console.error(err);
-      return res.sendStatus(500).end();
-    }
+    app.get("/delete/:id", async (req, res, next) => {
+      const id = req.params.id
+      if (!id) return res.sendStatus(400).end()
 
-    return res.redirect("/");
-  });
-});
+      await conn.execute("DELETE FROM products WHERE id = ?", [id]).catch(next)
 
-app.use("/public", express.static(path.join(__dirname, "public")));
+      return res.redirect("/")
+    })
 
-app.listen(process.env.PORT, process.env.HOST, () => {
-  console.log(
-    `HTTP Server listening on ${process.env.HOST}:${process.env.PORT}`
-  );
-});
+    app.use("/public", express.static(path.join(__dirname, "public")))
+
+    app.use((err, _req, res, _next) => {
+      console.error(err)
+      return res.sendStatus(500).end()
+    })
+
+    app.listen(process.env.PORT, process.env.HOST, () => {
+      console.log(
+        `HTTP Server listening on ${process.env.HOST}:${process.env.PORT}`
+      )
+    })
+  } catch (e) {
+    console.error(e)
+  }
+})()
